@@ -23,6 +23,8 @@ on:
 jobs:
   embed:
     runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
     steps:
       - name: Checkout code
@@ -44,7 +46,7 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run embedding pipeline (fp32 max quality + full ONNX CPU optimizations)
+      - name: Run embedding pipeline (Hardened)
         run: |
           python embed.py \
             --input "${{ inputs.input_file || 'data/README.md' }}" \
