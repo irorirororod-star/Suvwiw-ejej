@@ -1,22 +1,18 @@
-name: Embed with EmbeddingGemma-300M ONNX (Q8_0 Quantized)
+name: Embed with EmbeddingGemma-300M ONNX (Smart Chunking)
 
 on:
   workflow_dispatch:
     inputs:
       input_file:
-        description: 'Path to input JSONL (one {"text": "..."} per line or plain text)'
+        description: 'Path to input file (.jsonl, .md, .txt, etc.)'
         required: true
-        default: 'data/texts.jsonl'
+        default: 'data/README.md'
       batch_size:
-        description: 'Batch size (32–128 recommended for GH runners)'
+        description: 'Batch size for embedding'
         required: false
         default: '64'
-      quantization:
-        description: 'Quantization level (q8 = nearly identical quality + fast | q4 = max speed | fp32 = absolute max quality)'
-        required: false
-        default: 'q8'
       prefix:
-        description: 'Task prefix (highly recommended for quality, e.g. "task: search result | query: ")'
+        description: 'Task prefix (recommended)'
         required: false
         default: 'task: search result | query: '
 
@@ -26,8 +22,7 @@ on:
 
 jobs:
   embed:
-    runs-on: ubuntu-latest   # 4 vCPU free tier – excellent for this model
-    # For ultra-fast runs: change to ubuntu-latest-8cores (paid) or self-hosted
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -39,29 +34,28 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: Cache Hugging Face Hub (model + tokenizer)
+      - name: Cache Hugging Face Hub
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-hub-embeddinggemma-onnx-q8-${{ hashFiles('embed.py') }}
+          key: hf-hub-embeddinggemma-onnx-${{ hashFiles('embed.py') }}
 
       - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install transformers onnxruntime tqdm pandas pyarrow huggingface_hub
 
-      - name: Run embedding pipeline (Q8_0 by default – max quality + speed)
+      - name: Run embedding pipeline (max quality + speed with smart chunking)
         run: |
           python embed.py \
-            --input "${{ inputs.input_file || 'data/texts.jsonl' }}" \
+            --input "${{ inputs.input_file || 'data/README.md' }}" \
             --output embeddings.parquet \
             --batch-size ${{ inputs.batch_size || 64 }} \
-            --quantization ${{ inputs.quantization || 'q8' }} \
             --prefix "${{ inputs.prefix }}"
 
       - name: Upload embeddings artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gemma-embeddings-q8
+          name: gemma-embeddings
           path: embeddings.parquet
           retention-days: 30
