@@ -2,11 +2,11 @@ import os
 import sys
 
 # --- LEVEL 0: PRE-EMPTIVE ENVIRONMENT HARDENING ---
-# These must be set BEFORE any library imports to take effect during static initialization.
+# Must be set BEFORE any library imports to suppress static initialization noise.
 os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-os.environ["ORT_LOGGING_LEVEL"] = "3"  # Suppress ONNX Runtime device discovery/PCI warnings
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3" # Suppress potential TF fallback noise
+os.environ["ORT_LOGGING_LEVEL"] = "3"  
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3" 
 
 import argparse
 import json
@@ -16,7 +16,7 @@ import warnings
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-# Configure logging immediately to capture all subsequent library initializations
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -24,7 +24,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ARCHON")
 
-# Suppress verbose telemetry from third-party networking libraries
+# Suppress verbose telemetry
 logging.getLogger("huggingface_hub").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -44,10 +44,7 @@ MAX_SEQ_LENGTH = 2048
 
 def get_hf_token() -> Optional[str]:
     """Retrieves the HF token from environment with validation."""
-    token = os.getenv("HF_TOKEN")
-    if not token:
-        logger.warning("HF_TOKEN not found. Proceeding with unauthenticated requests (Rate limits may apply).")
-    return token
+    return os.getenv("HF_TOKEN")
 
 def load_model() -> ort.InferenceSession:
     """
@@ -73,7 +70,7 @@ def load_model() -> ort.InferenceSession:
                 token=token
             )
         except Exception:
-            pass # Not all exports utilize external data files
+            pass 
             
     except Exception as e:
         logger.error(f"Critical failure during model acquisition: {str(e)}")
@@ -81,9 +78,6 @@ def load_model() -> ort.InferenceSession:
 
     sess_options = ort.SessionOptions()
     sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    
-    # Optimization for GitHub Runners (typically 2-core)
-    # Setting to 0 allows ORT to auto-detect, but we enforce sequential mode for stability.
     sess_options.intra_op_num_threads = 0  
     sess_options.inter_op_num_threads = 0
     sess_options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL 
@@ -106,11 +100,8 @@ def chunk_text(text: str, tokenizer: Any, chunk_size: int = 512, overlap: int = 
     if not text or not text.strip():
         return []
 
-    # Normalize excessive whitespace to reduce token count
     text = re.sub(r'\n{3,}', '\n\n', text)
     
-    # Suppress the 'Token indices sequence length is longer than...' warning
-    # during the document-level encoding pass.
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", category=UserWarning, module="transformers")
         tokens = tokenizer.encode(
@@ -127,7 +118,6 @@ def chunk_text(text: str, tokenizer: Any, chunk_size: int = 512, overlap: int = 
 
     for i in range(0, len(tokens), step):
         chunk_tokens = tokens[i : i + chunk_size]
-        # Ensure we don't create empty or near-empty trailing chunks
         if len(chunk_tokens) < 5 and len(tokens) > 5:
             continue
             
@@ -139,7 +129,7 @@ def chunk_text(text: str, tokenizer: Any, chunk_size: int = 512, overlap: int = 
 
 def load_texts(input_path: str, tokenizer: Any) -> Tuple[List[str], List[str]]:
     """
-    Loads and preprocesses text from supported file formats with robust error handling.
+    Loads and preprocesses text from supported file formats.
     """
     path = Path(input_path)
     if not path.exists():
@@ -194,7 +184,6 @@ def embed_texts(
     input_names = [inp.name for inp in session.get_inputs()]
     output_names = [out.name for out in session.get_outputs()]
     
-    # Identify embedding output (usually index 0 or named 'last_hidden_state')
     emb_idx = 0
     for i, name in enumerate(output_names):
         if any(k in name.lower() for k in ["embedding", "last_hidden_state", "output"]):
@@ -204,7 +193,6 @@ def embed_texts(
     for i in tqdm(range(0, len(processed_texts), batch_size), desc="Inference"):
         batch = processed_texts[i : i + batch_size]
         
-        # Hard boundary enforcement: truncation=True ensures no input exceeds MAX_SEQ_LENGTH
         inputs = tokenizer(
             batch,
             padding=True,
@@ -219,9 +207,7 @@ def embed_texts(
             outputs = session.run(None, input_feed)
             batch_embeddings = outputs[emb_idx]
             
-            # Handle models returning [batch, seq, hidden] vs [batch, hidden]
             if len(batch_embeddings.shape) == 3:
-                # Apply mean pooling over the sequence dimension
                 mask = inputs.get("attention_mask")
                 if mask is not None:
                     mask = np.expand_dims(mask, -1)
@@ -239,24 +225,21 @@ def embed_texts(
     return np.vstack(all_embeddings)
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Systemically Hardened ONNX Embedding Pipeline")
+    parser = argparse.ArgumentParser(description="Hardened ONNX Embedding Pipeline with JSON support")
     parser.add_argument("--input", required=True, help="Input file path")
-    parser.add_argument("--output", default="embeddings.parquet")
+    parser.add_argument("--output", default="embeddings.json", help="Output file (supports .json or .parquet)")
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--prefix", default="task: search result | query: ")
     args = parser.parse_args()
 
     try:
         token = get_hf_token()
-        
-        # Initialize tokenizer (SentencePiece requirement)
         tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, token=token)
-        
         session = load_model()
         
         texts, sources = load_texts(args.input, tokenizer)
         if not texts:
-            logger.warning("Extraction yielded zero content. Terminating.")
+            logger.warning("Extraction yielded zero content.")
             return
 
         logger.info(f"✅ Total Chunks: {len(texts):,}")
@@ -271,7 +254,19 @@ def main() -> None:
             "embedding": list(embeddings)
         })
         
-        df.to_parquet(args.output, index=False, compression="zstd")
+        if output_path.suffix.lower() == ".json":
+            logger.info(f"💾 Saving human-readable JSON...")
+            # Convert numpy arrays to lists for JSON serialization
+            df["embedding"] = df["embedding"].apply(lambda x: x.tolist())
+            df.to_json(
+                output_path, 
+                orient="records", 
+                indent=2, 
+                force_ascii=False
+            )
+        else:
+            logger.info(f"💾 Saving optimized Parquet...")
+            df.to_parquet(output_path, index=False, compression="zstd")
         
         size_mb = output_path.stat().st_size / (1024**2)
         logger.info(f"✅ Success: {len(texts):,} embeddings saved to {args.output} ({size_mb:.2f} MB)")
