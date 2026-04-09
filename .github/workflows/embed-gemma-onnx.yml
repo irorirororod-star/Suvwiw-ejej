@@ -8,11 +8,11 @@ on:
         required: true
         default: 'data/README.md'
       batch_size:
-        description: 'Batch size (64 recommended for GH runners)'
+        description: 'Batch size (64 recommended)'
         required: false
         default: '64'
       quantization:
-        description: 'q8 = nearly identical quality + max speed | q4 = fastest | fp32 = absolute max quality'
+        description: 'q8 (default) = nearly identical quality + max speed | q4 = fastest | fp32 = absolute max quality'
         required: false
         default: 'q8'
       prefix:
@@ -36,20 +36,19 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip'
 
       - name: Cache Hugging Face Hub (model + tokenizer)
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface
-          key: hf-hub-embeddinggemma-onnx-q8-${{ hashFiles('embed.py') }}
+          key: hf-hub-embeddinggemma-onnx-q8-${{ hashFiles('embed.py', 'requirements.txt') }}
 
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install transformers onnxruntime tqdm pandas pyarrow huggingface_hub
+          pip install -r requirements.txt
 
-      - name: Run embedding pipeline (Q8_0 default – max quality + speed)
+      - name: Run embedding pipeline (Q8_0 default)
         run: |
           python embed.py \
             --input "${{ inputs.input_file || 'data/README.md' }}" \
