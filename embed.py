@@ -24,7 +24,7 @@ def load_model(quantization: str = "q8"):
 
     model_path = hf_hub_download(MODEL_ID, subfolder="onnx", filename=filename)
     
-    # Download external data file (required for most quantized variants)
+    # Download external .onnx_data if present
     try:
         data_filename = filename.replace(".onnx", ".onnx_data")
         hf_hub_download(MODEL_ID, subfolder="onnx", filename=data_filename)
@@ -33,7 +33,7 @@ def load_model(quantization: str = "q8"):
 
     sess_options = ort.SessionOptions()
     sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    sess_options.intra_op_num_threads = 0      # Auto-use all available CPU cores
+    sess_options.intra_op_num_threads = 0      # Auto-use all CPU cores on GitHub runner
     sess_options.inter_op_num_threads = 0
     sess_options.execution_mode = ort.ExecutionMode.ORT_PARALLEL
 
@@ -45,8 +45,8 @@ def load_model(quantization: str = "q8"):
     return session
 
 def chunk_text(text: str, tokenizer, chunk_size: int = 512, overlap: int = 64):
-    """Intelligent token-based chunking with overlap – perfect for READMEs, mixed languages, code blocks, tables."""
-    text = re.sub(r'\n{3,}', '\n\n', text)  # Normalize excessive newlines
+    """Token-based intelligent chunking for long/mixed READMEs."""
+    text = re.sub(r'\n{3,}', '\n\n', text)
     tokens = tokenizer.encode(text, add_special_tokens=False)
     chunks = []
     for i in range(0, len(tokens), chunk_size - overlap):
@@ -116,8 +116,7 @@ if __name__ == "__main__":
     parser.add_argument("--input", required=True, help="Input file (.jsonl, .md, .txt, etc.)")
     parser.add_argument("--output", default="embeddings.parquet")
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--quantization", choices=["q8", "q4", "fp32"], default="q8",
-                        help="q8 = nearly identical quality + fastest practical speed")
+    parser.add_argument("--quantization", choices=["q8", "q4", "fp32"], default="q8")
     parser.add_argument("--prefix", default="task: search result | query: ",
                         help="Task prefix – strongly recommended for best quality")
     args = parser.parse_args()
@@ -130,7 +129,7 @@ if __name__ == "__main__":
 
     embeddings = embed_texts(texts, session, tokenizer, args.batch_size, args.prefix)
 
-    # Optional Matryoshka truncation + normalization (uncomment for smaller vectors on huge datasets)
+    # Optional: Matryoshka truncation (uncomment for smaller vectors)
     # embeddings = embeddings[:, :512]
     # embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
 
@@ -144,4 +143,3 @@ if __name__ == "__main__":
     size_mb = Path(args.output).stat().st_size / (1024**2)
     print(f"✅ Saved {len(texts):,} embeddings → {args.output} ({size_mb:.1f} MB)")
     print(f"   Quantization: {args.quantization.upper()}_0 | Quality: nearly identical to fp32")
-    print("   Ready for RAG, semantic search, or vector DB ingestion")
