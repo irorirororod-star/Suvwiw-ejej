@@ -1,0 +1,6 @@
+transformers
+onnxruntime
+tqdm
+pandas
+pyarrow
+huggingface_hub
