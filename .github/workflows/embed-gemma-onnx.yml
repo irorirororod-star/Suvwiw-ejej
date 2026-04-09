@@ -7,6 +7,10 @@ on:
         description: 'Path to input file (.jsonl, .md, .txt, README.md, etc.)'
         required: true
         default: 'data/README.md'
+      output_file:
+        description: 'Output filename (use .json for human-readable, .parquet for speed)'
+        required: false
+        default: 'embeddings.json'
       batch_size:
         description: 'Batch size (64 recommended for GitHub runners)'
         required: false
@@ -46,11 +50,11 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run embedding pipeline (Hardened)
+      - name: Run embedding pipeline (JSON Output)
         run: |
           python embed.py \
             --input "${{ inputs.input_file || 'data/README.md' }}" \
-            --output embeddings.parquet \
+            --output "${{ inputs.output_file || 'embeddings.json' }}" \
             --batch-size ${{ inputs.batch_size || 64 }} \
             --prefix "${{ inputs.prefix }}"
 
@@ -58,5 +62,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: gemma-embeddings
-          path: embeddings.parquet
+          path: ${{ inputs.output_file || 'embeddings.json' }}
           retention-days: 30
