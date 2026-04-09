@@ -11,23 +11,13 @@ from huggingface_hub import hf_hub_download
 
 MODEL_ID = "onnx-community/embeddinggemma-300m-ONNX"
 
-def load_model(quantization: str = "q8"):
-    if quantization == "q8":
-        filename = "model_q8.onnx"
-        print("🚀 Loading Q8_0 quantized model (nearly identical quality to fp32 + maximum CPU speed)")
-    elif quantization == "q4":
-        filename = "model_q4.onnx"
-        print("⚡ Loading Q4_0 quantized model (maximum speed)")
-    else:  # fp32
-        filename = "model.onnx"
-        print("📈 Loading full fp32 model (absolute maximum quality)")
-
-    model_path = hf_hub_download(MODEL_ID, subfolder="onnx", filename=filename)
+def load_model():
+    print("🚀 Loading official fp32 ONNX model (maximum quality + optimized CPU inference)")
+    model_path = hf_hub_download(MODEL_ID, subfolder="onnx", filename="model.onnx")
     
-    # Download external .onnx_data if present
+    # Required external weights file
     try:
-        data_filename = filename.replace(".onnx", ".onnx_data")
-        hf_hub_download(MODEL_ID, subfolder="onnx", filename=data_filename)
+        hf_hub_download(MODEL_ID, subfolder="onnx", filename="model.onnx_data")
     except Exception:
         pass
 
@@ -45,8 +35,8 @@ def load_model(quantization: str = "q8"):
     return session
 
 def chunk_text(text: str, tokenizer, chunk_size: int = 512, overlap: int = 64):
-    """Token-based intelligent chunking for long/mixed READMEs."""
-    text = re.sub(r'\n{3,}', '\n\n', text)
+    """Token-based intelligent chunking for long READMEs, mixed languages, code, tables."""
+    text = re.sub(r'\n{3,}', '\n\n', text)  # Normalize excessive newlines
     tokens = tokenizer.encode(text, add_special_tokens=False)
     chunks = []
     for i in range(0, len(tokens), chunk_size - overlap):
@@ -112,16 +102,15 @@ def embed_texts(texts, session, tokenizer, batch_size=64, prefix=""):
     return np.vstack(embeddings)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Production-grade ONNX EmbeddingGemma-300M pipeline")
+    parser = argparse.ArgumentParser(description="Production-grade ONNX EmbeddingGemma-300M pipeline (fp32 max quality)")
     parser.add_argument("--input", required=True, help="Input file (.jsonl, .md, .txt, etc.)")
     parser.add_argument("--output", default="embeddings.parquet")
     parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--quantization", choices=["q8", "q4", "fp32"], default="q8")
     parser.add_argument("--prefix", default="task: search result | query: ",
                         help="Task prefix – strongly recommended for best quality")
     args = parser.parse_args()
 
-    session = load_model(args.quantization)
+    session = load_model()
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
     texts, sources = load_texts(args.input, tokenizer)
@@ -129,7 +118,7 @@ if __name__ == "__main__":
 
     embeddings = embed_texts(texts, session, tokenizer, args.batch_size, args.prefix)
 
-    # Optional: Matryoshka truncation (uncomment for smaller vectors)
+    # Optional: Matryoshka truncation + normalization (uncomment for smaller vectors)
     # embeddings = embeddings[:, :512]
     # embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
 
@@ -142,4 +131,5 @@ if __name__ == "__main__":
     
     size_mb = Path(args.output).stat().st_size / (1024**2)
     print(f"✅ Saved {len(texts):,} embeddings → {args.output} ({size_mb:.1f} MB)")
-    print(f"   Quantization: {args.quantization.upper()}_0 | Quality: nearly identical to fp32")
+    print("   Model: fp32 (maximum quality) | ONNX Runtime fully optimized for CPU")
+    print("   Ready for RAG, semantic search, or vector DB ingestion")
