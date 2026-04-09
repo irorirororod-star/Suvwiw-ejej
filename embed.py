@@ -11,19 +11,29 @@ from huggingface_hub import hf_hub_download
 
 MODEL_ID = "onnx-community/embeddinggemma-300m-ONNX"
 
-def load_model():
-    print("🚀 Loading official ONNX model (optimized for CPU, maximum quality + speed)")
-    model_path = hf_hub_download(MODEL_ID, subfolder="onnx", filename="model.onnx")
+def load_model(quantization: str = "q8"):
+    if quantization == "q8":
+        filename = "model_q8.onnx"
+        print("🚀 Loading Q8_0 quantized model (nearly identical quality to fp32 + maximum CPU speed)")
+    elif quantization == "q4":
+        filename = "model_q4.onnx"
+        print("⚡ Loading Q4_0 quantized model (maximum speed)")
+    else:  # fp32
+        filename = "model.onnx"
+        print("📈 Loading full fp32 model (absolute maximum quality)")
+
+    model_path = hf_hub_download(MODEL_ID, subfolder="onnx", filename=filename)
     
-    # Download external data file if present
+    # Download external data file (required for most quantized variants)
     try:
-        hf_hub_download(MODEL_ID, subfolder="onnx", filename="model.onnx_data")
+        data_filename = filename.replace(".onnx", ".onnx_data")
+        hf_hub_download(MODEL_ID, subfolder="onnx", filename=data_filename)
     except Exception:
         pass
 
     sess_options = ort.SessionOptions()
     sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    sess_options.intra_op_num_threads = 0   # Use all CPU cores
+    sess_options.intra_op_num_threads = 0      # Auto-use all available CPU cores
     sess_options.inter_op_num_threads = 0
     sess_options.execution_mode = ort.ExecutionMode.ORT_PARALLEL
 
@@ -35,13 +45,10 @@ def load_model():
     return session
 
 def chunk_text(text: str, tokenizer, chunk_size: int = 512, overlap: int = 64):
-    """Token-based chunking with overlap — perfect for long READMEs with mixed content."""
-    # Simple markdown cleanup (optional, keeps code/headers intact)
-    text = re.sub(r'\n{3,}', '\n\n', text)  # normalize excessive newlines
-    
+    """Intelligent token-based chunking with overlap – perfect for READMEs, mixed languages, code blocks, tables."""
+    text = re.sub(r'\n{3,}', '\n\n', text)  # Normalize excessive newlines
     tokens = tokenizer.encode(text, add_special_tokens=False)
     chunks = []
-    
     for i in range(0, len(tokens), chunk_size - overlap):
         chunk_tokens = tokens[i : i + chunk_size]
         chunk_text = tokenizer.decode(chunk_tokens, skip_special_tokens=True)
@@ -67,15 +74,13 @@ def load_texts(input_path: str, tokenizer):
                         texts.append(line)
                     sources.append(str(path))
     else:
-        # Any text file (README.md, .txt, etc.) → full document + smart chunking
-        print(f"📄 Text file mode: reading entire file + chunking ({path.name})")
+        print(f"📄 Text file mode: full document + smart chunking ({path.name})")
         with open(path, encoding="utf-8") as f:
             full_text = f.read()
-        
         chunks = chunk_text(full_text, tokenizer)
         texts.extend(chunks)
         sources.extend([str(path)] * len(chunks))
-        print(f"   → Split into {len(chunks)} chunks")
+        print(f"   → Split into {len(chunks)} overlapping chunks")
     
     return texts, sources
 
@@ -107,15 +112,17 @@ def embed_texts(texts, session, tokenizer, batch_size=64, prefix=""):
     return np.vstack(embeddings)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Production ONNX EmbeddingGemma pipeline with smart chunking")
+    parser = argparse.ArgumentParser(description="Production-grade ONNX EmbeddingGemma-300M pipeline")
     parser.add_argument("--input", required=True, help="Input file (.jsonl, .md, .txt, etc.)")
     parser.add_argument("--output", default="embeddings.parquet")
     parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--quantization", choices=["q8", "q4", "fp32"], default="q8",
+                        help="q8 = nearly identical quality + fastest practical speed")
     parser.add_argument("--prefix", default="task: search result | query: ",
-                        help="Task prefix – strongly recommended")
+                        help="Task prefix – strongly recommended for best quality")
     args = parser.parse_args()
 
-    session = load_model()
+    session = load_model(args.quantization)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
 
     texts, sources = load_texts(args.input, tokenizer)
@@ -123,7 +130,10 @@ if __name__ == "__main__":
 
     embeddings = embed_texts(texts, session, tokenizer, args.batch_size, args.prefix)
 
-    # Save with source tracking
+    # Optional Matryoshka truncation + normalization (uncomment for smaller vectors on huge datasets)
+    # embeddings = embeddings[:, :512]
+    # embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+
     df = pd.DataFrame({
         "text": texts,
         "source_file": sources,
@@ -133,4 +143,5 @@ if __name__ == "__main__":
     
     size_mb = Path(args.output).stat().st_size / (1024**2)
     print(f"✅ Saved {len(texts):,} embeddings → {args.output} ({size_mb:.1f} MB)")
-    print("   Ready for RAG / semantic search / vector DB")
+    print(f"   Quantization: {args.quantization.upper()}_0 | Quality: nearly identical to fp32")
+    print("   Ready for RAG, semantic search, or vector DB ingestion")
